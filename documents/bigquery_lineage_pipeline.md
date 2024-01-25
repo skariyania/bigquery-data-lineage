@@ -2,7 +2,7 @@
 
 In a big-data environment, operational systems feed the data-warehouse with fresh data, which is processed through multiple pipelines designed by data-engineers into business consumable information, that is analysed by business users through a variety of methods of merging and transforming to gain insights. Knowing the details of its origin, how it got there, and how it’s flowing through the business is paramount to its value.
 
-[Data Lineage](https://en.wikipedia.org/wiki/Data_lineage) is the ability to trace origin and transformations that the data goes through over time. Traceability in a big data system is critical from a data-governance standpoint to put safe-guards on sensitive data and also to ensure that data including metadata stays within the customer’s Cloud Organisation or Project. This solution shall introduce you to a reference implementation for a Lineage system for [Big Query](https://cloud.google.com/bigquery).
+[Data Lineage](https://en.wikipedia.org/wiki/Data_lineage) is the ability to trace origin and transformations that the data goes through over time. Traceability in a big data system is critical from a data-governance standpoint to put safe-guards on sensitive data and also to ensure that data including metadata stays within the customer’s Cloud Organisation or Project. This solution shall introduce you to a reference implementation for a Lineage system for [BigQuery](https://cloud.google.com/bigquery).
 
 ### Reference Architecture
 
@@ -104,26 +104,37 @@ gcloud pubsub topics create $LINEAGE_OUTPUT_PUBSUB_TOPIC --project $PROJECT_ID
     ```shell script
     gsutil mb -l $REGION_ID -p $PROJECT_ID gs://$TEMP_GCS_BUCKET
     ```
-2. Launch Dataflow pipeline
-    ```shell script
-    sh launch_extraction.sh
+2. Build the pipeline using Cloud Build
+    ```shell
+    gcloud builds submit --config=cloudbuild.yaml \
+    --substitutions _TEMPLATE_IMAGE_TAG="${LINEAGE_EXTRACTION_TEMPLATE_IMAGE}",_MAIN_CLASS="${EXTRACTION_MAIN_CLASS}" \
+    --project "${PROJECT_ID}"
     ```
-   OR
-    ```shell script
-    mvn clean generate-sources compile package exec:java \
-      -Dexec.mainClass=$EXTRACTION_MAIN_CLASS \
-      -Dexec.cleanupDaemonThreads=false \
-      -Dmaven.test.skip=true \
-      -Dexec.args=" \
-    --streaming=true \
-    --project=$PROJECT_ID \
-    --runner=DataflowRunner \
-    --gcpTempLocation=gs://$TEMP_GCS_BUCKET/temp/ \
-    --stagingLocation=gs://$TEMP_GCS_BUCKET/staging/ \
-    --workerMachineType=n1-standard-1 \
-    --region=$REGION_ID \
-    --lineageTableName=$PROJECT_ID:$DATASET_ID.$LINEAGE_TABLE_ID \
-    --tagTemplateId=$LINEAGE_TAG_TEMPLATE_ID \
-    --pubsubTopic=projects/$PROJECT_ID/topics/$AUDIT_LOGS_PUBSUB_TOPIC \
-    --compositeLineageTopic=projects/$PROJECT_ID/topics/$LINEAGE_OUTPUT_PUBSUB_TOPIC"
+
+
+3. Create Dataflow flex template:
+
+    ```shell
+    gcloud dataflow flex-template build \
+    "${LINEAGE_TEMPLATE_GCS_PATH}" \
+    --project="${PROJECT_ID}" \
+    --image="${LINEAGE_EXTRACTION_TEMPLATE_IMAGE}" \
+    --metadata-file="lineage-extraction-metadata.json" \
+    --sdk-language="JAVA"
+    ```
+
+4. Launch the pipeline:
+
+    ```shell  
+    gcloud dataflow flex-template run \
+    "bigquery-lineage-extraction-$(date +%Y%m%d%H%M%S)" \
+    --template-file-gcs-location="${LINEAGE_TEMPLATE_GCS_PATH}" \
+    --project="${PROJECT_ID}" \
+    --region="${REGION_ID}" \
+    --temp-location="gs://${TEMP_GCS_BUCKET}/temp/" \
+    --staging-location="gs://${TEMP_GCS_BUCKET}/staging/" \
+    --parameters=lineageTableName="${PROJECT_ID}:${DATASET_ID}.${LINEAGE_TABLE_ID}" \
+    --parameters=tagTemplateId="${LINEAGE_TAG_TEMPLATE_ID}" \
+    --parameters=pubsubTopic="projects/${PROJECT_ID}/topics/${AUDIT_LOGS_PUBSUB_TOPIC}" \
+    --parameters=compositeLineageTopic="projects/${PROJECT_ID}/topics/${LINEAGE_OUTPUT_PUBSUB_TOPIC}"
     ```
